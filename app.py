@@ -11,23 +11,23 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Wealth Nexus", page_icon="🏛️", layout="wide")
 
 # ==========================================
-# 💎 カスタムCSS（ブラック＆ゴールド）
+# 💎 残りの微調整用CSS（config.tomlで設定できない部分のみ）
 # ==========================================
 custom_css = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@300;400;600&display=swap');
-
     html, body, [class*="css"] { font-family: 'Noto Serif JP', serif !important; }
-    .stApp { background-color: #0A0A0A; color: #F2F2F2; }
-    [data-testid="stSidebar"] { background-color: #141414 !important; border-right: 1px solid #332918; }
     
+    /* メトリクス（数字）と矢印をゴールドに強調 */
     div[data-testid="stMetricValue"] { color: #C5A059 !important; font-weight: 600; }
     div[data-testid="stMetricDelta"] svg { fill: #C5A059 !important; }
     
+    /* タブの装飾 */
     .stTabs [data-baseweb="tab-list"] { gap: 24px; }
     .stTabs [data-baseweb="tab"] { color: #8C8C8C; border-bottom-color: transparent !important; background-color: transparent !important; }
     .stTabs [aria-selected="true"] { color: #C5A059 !important; border-bottom-color: #C5A059 !important; font-weight: 600; }
 
+    /* デフォルトのメニューやフッターを非表示 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
