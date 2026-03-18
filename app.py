@@ -11,23 +11,17 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Wealth Nexus", page_icon="🏛️", layout="wide")
 
 # ==========================================
-# 💎 残りの微調整用CSS（config.tomlで設定できない部分のみ）
+# 💎 カスタムCSS（config.tomlで設定できない部分）
 # ==========================================
 custom_css = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@300;400;600&display=swap');
     html, body, [class*="css"] { font-family: 'Noto Serif JP', serif !important; }
-    
-    /* メトリクス（数字）と矢印をゴールドに強調 */
     div[data-testid="stMetricValue"] { color: #C5A059 !important; font-weight: 600; }
     div[data-testid="stMetricDelta"] svg { fill: #C5A059 !important; }
-    
-    /* タブの装飾 */
     .stTabs [data-baseweb="tab-list"] { gap: 24px; }
     .stTabs [data-baseweb="tab"] { color: #8C8C8C; border-bottom-color: transparent !important; background-color: transparent !important; }
     .stTabs [aria-selected="true"] { color: #C5A059 !important; border-bottom-color: #C5A059 !important; font-weight: 600; }
-
-    /* デフォルトのメニューやフッターを非表示 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -36,24 +30,90 @@ custom_css = """
 st.markdown(custom_css, unsafe_allow_html=True)
 
 # ==========================================
-# 📊 ダミーデータの生成（確認用）
+# 🛠️ 無敵のCSV読み込み関数
 # ==========================================
-data = {
-    'アセットクラス': ['国内株式', '米国株式', '米国株式', '投資信託', '暗号資産', '現金・預金'],
-    '銘柄名': ['トヨタ自動車', 'Apple Inc.', 'Microsoft Corp.', 'eMAXIS Slim 全世界株式', 'Bitcoin', '日本円'],
-    '保有数量': [2000, 300, 200, 1500000, 2.5, 1],
-    '平均取得単価': [2500, 150, 300, 18000, 8000000, 25000000],
-    '現在値': [3500, 180, 410, 23000, 10500000, 25000000]
-}
-df_assets = pd.DataFrame(data)
-df_assets['取得金額'] = np.where(df_assets['アセットクラス'] == '現金・預金', df_assets['平均取得単価'], df_assets['保有数量'] * df_assets['平均取得単価'])
-df_assets['評価額'] = np.where(df_assets['アセットクラス'] == '現金・預金', df_assets['現在値'], df_assets['保有数量'] * df_assets['現在値'])
-df_assets['評価損益'] = df_assets['評価額'] - df_assets['取得金額']
-df_assets['損益率(%)'] = (df_assets['評価損益'] / df_assets['取得金額']) * 100
+def load_csv_safe(file):
+    encodings = ['cp932', 'shift_jis', 'utf-8', 'utf-8-sig']
+    for enc in encodings:
+        try:
+            file.seek(0)
+            return pd.read_csv(file, encoding=enc)
+        except:
+            continue
+    file.seek(0)
+    return pd.read_csv(file, encoding='cp932', encoding_errors='replace')
 
-months = [(datetime.today() - timedelta(days=30*i)).strftime('%Y-%m') for i in range(11, -1, -1)]
-trend_values = [85000000, 86000000, 84000000, 89000000, 92000000, 91000000, 95000000, 98000000, 102000000, 100000000, 105000000, df_assets['評価額'].sum()]
-df_trend = pd.DataFrame({'年月': months, '総資産額': trend_values})
+# ==========================================
+# UI: サイドバー（CSVアップロード）
+# ==========================================
+with st.sidebar:
+    st.markdown("<h3 style='color: #C5A059; font-weight: 400;'>データ連携</h3>", unsafe_allow_html=True)
+    st.write("SBI証券の「保有証券一覧」CSVをアップロードしてください。")
+    uploaded_file = st.file_uploader("📥 保有資産CSV", type="csv")
+    
+    st.divider()
+    # 現金入力欄（SBIのCSVには買付余力などの現金が含まれないことがあるため手入力で補完）
+    cash_amount = st.number_input("💰 現金・預金（手入力）", min_value=0, value=5000000, step=100000)
+
+# ==========================================
+# 📊 データ処理ロジック
+# ==========================================
+if uploaded_file is not None:
+    # アップロードされたSBIのCSVを読み込む
+    raw_df = load_csv_safe(uploaded_file)
+    
+    # ⚠️ SBI証券の列名を、アプリ用の列名にマッピング（変換）する
+    # ※もし実際のCSVの列名と違う場合は、ここを修正します
+    try:
+        # 文字列のカンマを取り除いて数値化する処理
+        for col in ['保有数量', '取得単価', '現在値', '評価額']:
+            if col in raw_df.columns:
+                raw_df[col] = raw_df[col].astype(str).str.replace(',', '', regex=False).str.replace('円', '', regex=False)
+                raw_df[col] = pd.to_numeric(raw_df[col], errors='coerce').fillna(0)
+
+        df_assets = pd.DataFrame({
+            'アセットクラス': '証券口座資産', # 後で判別ロジックを入れることも可能
+            '銘柄名': raw_df['銘柄（ファンド名）'] if '銘柄（ファンド名）' in raw_df.columns else raw_df.iloc[:, 0], # 見つからなければ1列目を銘柄名とする
+            '保有数量': raw_df['保有数量'] if '保有数量' in raw_df.columns else 0,
+            '平均取得単価': raw_df['取得単価'] if '取得単価' in raw_df.columns else 0,
+            '現在値': raw_df['現在値'] if '現在値' in raw_df.columns else 0,
+            '評価額': raw_df['評価額'] if '評価額' in raw_df.columns else 0,
+        })
+        
+        # 評価損益と取得金額の計算
+        df_assets['取得金額'] = df_assets['保有数量'] * df_assets['平均取得単価']
+        # 評価額がCSVにない場合は 現在値×数量 で計算
+        df_assets['評価額'] = np.where(df_assets['評価額'] > 0, df_assets['評価額'], df_assets['保有数量'] * df_assets['現在値'])
+        df_assets['評価損益'] = df_assets['評価額'] - df_assets['取得金額']
+        df_assets['損益率(%)'] = np.where(df_assets['取得金額'] > 0, (df_assets['評価損益'] / df_assets['取得金額']) * 100, 0)
+        
+    except Exception as e:
+        st.error(f"データの読み込みに失敗しました。CSVのフォーマットが予想と異なる可能性があります。（エラー詳細: {e}）")
+        st.stop()
+        
+else:
+    # ファイルがアップロードされていない時はダミーデータを表示
+    st.info("👈 左側のメニューからSBI証券のCSVをアップロードすると、実際のデータに切り替わります。")
+    data = {
+        'アセットクラス': ['国内株式', '米国株式', '投資信託'],
+        '銘柄名': ['ダミー銘柄A', 'ダミー銘柄B', 'ダミーファンドC'],
+        '保有数量': [1000, 200, 500000],
+        '平均取得単価': [1500, 200, 12000],
+        '現在値': [1800, 250, 15000]
+    }
+    df_assets = pd.DataFrame(data)
+    df_assets['取得金額'] = df_assets['保有数量'] * df_assets['平均取得単価']
+    df_assets['評価額'] = df_assets['保有数量'] * df_assets['現在値']
+    df_assets['評価損益'] = df_assets['評価額'] - df_assets['取得金額']
+    df_assets['損益率(%)'] = (df_assets['評価損益'] / df_assets['取得金額']) * 100
+
+# 手入力の現金をデータフレームに追加
+cash_df = pd.DataFrame({
+    'アセットクラス': ['現金・預金'], '銘柄名': ['日本円'], '保有数量': [1], '平均取得単価': [cash_amount], 
+    '現在値': [cash_amount], '取得金額': [cash_amount], '評価額': [cash_amount], '評価損益': [0], '損益率(%)': [0.0]
+})
+df_assets = pd.concat([df_assets, cash_df], ignore_index=True)
+
 
 # ==========================================
 # UI: ヘッダー
@@ -67,17 +127,15 @@ st.divider()
 # ==========================================
 total_assets = df_assets['評価額'].sum()
 total_profit = df_assets['評価損益'].sum()
-profit_rate = (total_profit / df_assets['取得金額'].sum()) * 100
-last_month_assets = df_trend['総資産額'].iloc[-2]
-mom_diff = total_assets - last_month_assets
+profit_rate = (total_profit / df_assets['取得金額'].sum()) * 100 if df_assets['取得金額'].sum() > 0 else 0
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric(label="総資産額", value=f"¥ {total_assets:,.0f}", delta=f"前月比: {mom_diff:,.0f} 円")
+    st.metric(label="総資産額", value=f"¥ {total_assets:,.0f}")
 with col2:
     st.metric(label="トータルリターン（評価損益）", value=f"¥ {total_profit:,.0f}", delta=f"{profit_rate:.2f} %")
 with col3:
-    st.metric(label="現金比率", value=f"{(df_assets[df_assets['アセットクラス'] == '現金・預金']['評価額'].sum() / total_assets)*100:.1f} %")
+    st.metric(label="現金比率", value=f"{(cash_amount / total_assets)*100:.1f} %" if total_assets > 0 else "0 %")
 
 st.write("")
 st.write("")
@@ -88,6 +146,7 @@ st.write("")
 g1, g2 = st.columns(2)
 
 with g1:
+    # ドーナツグラフ
     allocation = df_assets.groupby('アセットクラス')['評価額'].sum().reset_index()
     fig_pie = px.pie(allocation, names='アセットクラス', values='評価額', hole=0.75)
     fig_pie.update_layout(
@@ -100,17 +159,18 @@ with g1:
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with g2:
-    fig_line = px.line(df_trend, x='年月', y='総資産額', markers=True)
-    fig_line.update_layout(
-        title=dict(text='資産推移（過去12ヶ月）', font=dict(color='#C5A059', size=20)),
+    # SBIのCSVには過去の推移データがないため、今回は各銘柄の「評価額」の棒グラフを表示します
+    fig_bar = px.bar(df_assets[df_assets['評価額'] > 0].sort_values('評価額', ascending=False), 
+                     x='銘柄名', y='評価額', text_auto='.2s')
+    fig_bar.update_layout(
+        title=dict(text='保有銘柄別 評価額', font=dict(color='#C5A059', size=20)),
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#8C8C8C'),
         xaxis=dict(showgrid=False, color='#8C8C8C'),
         yaxis=dict(showgrid=True, gridcolor='#332918', color='#8C8C8C'),
         margin=dict(t=50, b=20, l=0, r=0)
     )
-    fig_line.update_traces(line_color='#C5A059', line_width=3, marker=dict(size=8, color='#F2F2F2'))
-    fig_line.add_trace(go.Scatter(x=df_trend['年月'], y=df_trend['総資産額'], fill='tozeroy', fillcolor='rgba(197, 160, 89, 0.1)', line=dict(color='rgba(255,255,255,0)'), showlegend=False))
-    st.plotly_chart(fig_line, use_container_width=True)
+    fig_bar.update_traces(marker_color='#C5A059', textfont_color='#0A0A0A', textposition='outside')
+    st.plotly_chart(fig_bar, use_container_width=True)
 
 st.divider()
 
