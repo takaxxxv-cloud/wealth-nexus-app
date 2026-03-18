@@ -4,7 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import csv # 💡 追加：CSVを細かく解析するためのライブラリ
+import csv
 
 # ==========================================
 # ページ設定
@@ -26,27 +26,28 @@ custom_css = """
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+    
+    /* データエディタのヘッダー色などを少し調整 */
+    [data-testid="stDataFrame"] { background-color: transparent !important; }
 </style>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
 # ==========================================
-# 🛠️ SBI証券専用 CSV解析関数（多段フォーマット対応）
+# 🛠️ SBI証券専用 CSV解析関数
 # ==========================================
 def parse_sbi_csv(file):
-    # ファイルの文字列を読み込む
     content = file.getvalue().decode('cp932', errors='replace')
     lines = content.split('\n')
     
     parsed_data = []
     header_map = {}
-    mode = None # 今「株式」を読んでいるか「投資信託」を読んでいるかの状態
+    mode = None
     
     reader = csv.reader(lines)
     for row in reader:
         if not row or len(row) == 0: continue
         
-        # 1. 見出し行の検知（ブロックの始まり）
         if '銘柄名称' in row:
             mode = 'stock'
             header_map = {col.strip(): i for i, col in enumerate(row) if col.strip()}
@@ -55,12 +56,10 @@ def parse_sbi_csv(file):
             mode = 'fund'
             header_map = {col.strip(): i for i, col in enumerate(row) if col.strip()}
             continue
-        # ブロックの終わり（合計行など）
         elif '評価損益合計' in row or '評価額合計' in row or (len(row) > 0 and '合計' in str(row[0])):
             mode = None 
             continue
         
-        # 2. データの抽出
         if mode == 'stock':
             if '銘柄名称' not in header_map: continue
             name = row[header_map['銘柄名称']]
@@ -71,9 +70,8 @@ def parse_sbi_csv(file):
                 cost = float(str(row[header_map['取得単価']]).replace(',', ''))
                 price = float(str(row[header_map['現在値']]).replace(',', ''))
                 value = float(str(row[header_map['評価額']]).replace(',', ''))
-                parsed_data.append({'アセットクラス': '株式', '銘柄名': name, '保有数量': qty, '平均取得単価': cost, '現在値': price, '評価額': value})
-            except:
-                pass # 数値に変換できないエラー行は無視
+                parsed_data.append({'アセットクラス': '国内株式', '銘柄名': name, '保有数量': qty, '平均取得単価': cost, '現在値': price, '評価額': value})
+            except: pass
                 
         elif mode == 'fund':
             if 'ファンド名' not in header_map: continue
@@ -81,66 +79,89 @@ def parse_sbi_csv(file):
             if not name or name.startswith('評価') or name.startswith('投資信託'): continue
             
             try:
-                # 投資信託の「口」の文字を取り除いて数値化
                 qty = float(str(row[header_map['保有口数']]).replace(',', '').replace('口', ''))
                 cost = float(str(row[header_map['取得単価']]).replace(',', ''))
                 price = float(str(row[header_map['基準価額']]).replace(',', ''))
                 value = float(str(row[header_map['評価額']]).replace(',', ''))
                 parsed_data.append({'アセットクラス': '投資信託', '銘柄名': name, '保有数量': qty, '平均取得単価': cost, '現在値': price, '評価額': value})
-            except:
-                pass
+            except: pass
 
     return pd.DataFrame(parsed_data)
 
 # ==========================================
-# UI: サイドバー（CSVアップロード）
+# UI: サイドバー（データ入力パネル）
 # ==========================================
 with st.sidebar:
     st.markdown("<h3 style='color: #C5A059; font-weight: 400;'>データ連携</h3>", unsafe_allow_html=True)
-    st.write("SBI証券の「保有証券一覧」CSVをアップロードしてください。")
-    uploaded_file = st.file_uploader("📥 保有資産CSV", type="csv")
+    uploaded_file = st.file_uploader("📥 SBI証券 CSV (国内株・投信)", type="csv")
     
     st.divider()
-    cash_amount = st.number_input("💰 現金・預金（手入力）", min_value=0, value=5000000, step=100000)
-
-# ==========================================
-# 📊 データ処理ロジック
-# ==========================================
-if uploaded_file is not None:
-    # 🎯 ここで先ほど作った専用関数を呼び出す
-    df_assets = parse_sbi_csv(uploaded_file)
     
-    if len(df_assets) == 0:
-        st.error("データを抽出できませんでした。SBI証券のCSVファイルか確認してください。")
-        st.stop()
-        
-    # 評価損益と取得金額の計算
-    df_assets['取得金額'] = df_assets['保有数量'] * df_assets['平均取得単価']
-    df_assets['評価損益'] = df_assets['評価額'] - df_assets['取得金額']
-    df_assets['損益率(%)'] = np.where(df_assets['取得金額'] > 0, (df_assets['評価損益'] / df_assets['取得金額']) * 100, 0)
-        
-else:
-    # ファイルがない時のダミーデータ
-    st.info("👈 左側のメニューからSBI証券のCSVをアップロードすると、実際のデータに切り替わります。")
-    data = {
-        'アセットクラス': ['国内株式', '米国株式', '投資信託'],
-        '銘柄名': ['ダミー銘柄A', 'ダミー銘柄B', 'ダミーファンドC'],
-        '保有数量': [1000, 200, 500000],
-        '平均取得単価': [1500, 200, 12000],
-        '現在値': [1800, 250, 15000]
-    }
-    df_assets = pd.DataFrame(data)
-    df_assets['取得金額'] = df_assets['保有数量'] * df_assets['平均取得単価']
-    df_assets['評価額'] = df_assets['保有数量'] * df_assets['現在値']
-    df_assets['評価損益'] = df_assets['評価額'] - df_assets['取得金額']
-    df_assets['損益率(%)'] = (df_assets['評価損益'] / df_assets['取得金額']) * 100
+    # 💰 現金入力
+    cash_amount = st.number_input("💰 現金・預金（円）", min_value=0, value=5000000, step=100000)
+    
+    st.divider()
+    
+    # 🌍 外国株式入力エリア
+    st.markdown("<h4 style='color: #C5A059; font-weight: 400;'>🌍 外国株式（手入力）</h4>", unsafe_allow_html=True)
+    exchange_rate = st.number_input("💵 現在の為替レート (円/ドル)", min_value=100.0, value=150.0, step=0.5)
+    
+    # 手入力用データフレームの初期化
+    if 'foreign_data' not in st.session_state:
+        st.session_state.foreign_data = pd.DataFrame(
+            [{"銘柄名": "AAPL", "数量": 10.0, "平均取得単価($)": 150.0, "現在値($)": 170.0}]
+        )
+    
+    st.caption("※行の一番下をクリックして新しい銘柄を追加できます。ドルで入力すると自動で円換算されます。")
+    # 🔥 ここが魔法のデータエディター！
+    edited_foreign = st.data_editor(
+        st.session_state.foreign_data,
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True
+    )
 
-# 手入力の現金を合算
+# ==========================================
+# 📊 データ処理・結合ロジック
+# ==========================================
+df_list = []
+
+# 1. SBI証券のデータ（CSVがあれば）
+if uploaded_file is not None:
+    sbi_df = parse_sbi_csv(uploaded_file)
+    if len(sbi_df) > 0:
+        sbi_df['取得金額'] = sbi_df['保有数量'] * sbi_df['平均取得単価']
+        sbi_df['評価損益'] = sbi_df['評価額'] - sbi_df['取得金額']
+        df_list.append(sbi_df)
+
+# 2. 外国株式のデータ（手入力）
+f_df = edited_foreign.copy()
+f_df = f_df[f_df['銘柄名'].str.strip() != ""] # 空白で入力された行は無視
+if len(f_df) > 0:
+    f_df['保有数量'] = pd.to_numeric(f_df['数量'], errors='coerce').fillna(0)
+    # ドル($)の入力値を、為替レートを掛けて日本円に変換
+    f_df['平均取得単価'] = pd.to_numeric(f_df['平均取得単価($)'], errors='coerce').fillna(0) * exchange_rate
+    f_df['現在値'] = pd.to_numeric(f_df['現在値($)'], errors='coerce').fillna(0) * exchange_rate
+    f_df['アセットクラス'] = '米国株式'
+    
+    f_df['取得金額'] = f_df['保有数量'] * f_df['平均取得単価']
+    f_df['評価額'] = f_df['保有数量'] * f_df['現在値']
+    f_df['評価損益'] = f_df['評価額'] - f_df['取得金額']
+    
+    # 必要な列だけを抽出して結合リストに追加
+    df_list.append(f_df[['アセットクラス', '銘柄名', '保有数量', '平均取得単価', '現在値', '取得金額', '評価額', '評価損益']])
+
+# 3. 現金データ
 cash_df = pd.DataFrame({
     'アセットクラス': ['現金・預金'], '銘柄名': ['日本円'], '保有数量': [1], '平均取得単価': [cash_amount], 
-    '現在値': [cash_amount], '取得金額': [cash_amount], '評価額': [cash_amount], '評価損益': [0], '損益率(%)': [0.0]
+    '現在値': [cash_amount], '取得金額': [cash_amount], '評価額': [cash_amount], '評価損益': [0]
 })
-df_assets = pd.concat([df_assets, cash_df], ignore_index=True)
+df_list.append(cash_df)
+
+# 🚀 全データをガッチャンコ（結合）
+df_assets = pd.concat(df_list, ignore_index=True)
+# 全体を結合したあとに、パーセンテージを計算
+df_assets['損益率(%)'] = np.where(df_assets['取得金額'] > 0, (df_assets['評価損益'] / df_assets['取得金額']) * 100, 0)
 
 
 # ==========================================
@@ -185,10 +206,11 @@ with g1:
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with g2:
-    fig_bar = px.bar(df_assets[df_assets['評価額'] > 0].sort_values('評価額', ascending=False), 
-                     x='銘柄名', y='評価額', text_auto='.2s')
+    # 評価額が0より大きいものを抽出し、降順にソートしてトップ10を表示
+    top_assets = df_assets[df_assets['評価額'] > 0].sort_values('評価額', ascending=False).head(10)
+    fig_bar = px.bar(top_assets, x='銘柄名', y='評価額', text_auto='.2s')
     fig_bar.update_layout(
-        title=dict(text='保有銘柄別 評価額', font=dict(color='#C5A059', size=20)),
+        title=dict(text='保有銘柄 トップ10', font=dict(color='#C5A059', size=20)),
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#8C8C8C'),
         xaxis=dict(showgrid=False, color='#8C8C8C'),
         yaxis=dict(showgrid=True, gridcolor='#332918', color='#8C8C8C'),
@@ -205,7 +227,7 @@ st.divider()
 st.markdown("<h3 style='color: #F2F2F2; font-weight: 300;'>📋 保有銘柄詳細</h3>", unsafe_allow_html=True)
 
 display_df = df_assets.copy()
-display_df['保有数量'] = display_df.apply(lambda x: '-' if x['アセットクラス'] == '現金・預金' else f"{x['保有数量']:,.0f}", axis=1)
+display_df['保有数量'] = display_df.apply(lambda x: '-' if x['アセットクラス'] == '現金・預金' else f"{x['保有数量']:,.2f}", axis=1)
 display_df['平均取得単価'] = display_df.apply(lambda x: '-' if x['アセットクラス'] == '現金・預金' else f"¥ {x['平均取得単価']:,.0f}", axis=1)
 display_df['現在値'] = display_df.apply(lambda x: '-' if x['アセットクラス'] == '現金・預金' else f"¥ {x['現在値']:,.0f}", axis=1)
 display_df['評価額'] = display_df['評価額'].apply(lambda x: f"¥ {x:,.0f}")
