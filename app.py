@@ -30,18 +30,19 @@ custom_css = """
 st.markdown(custom_css, unsafe_allow_html=True)
 
 # ==========================================
-# 🛠️ 無敵のCSV読み込み関数
+# 🛠️ 無敵のCSV読み込み関数（SBI証券の不規則フォーマット対応版）
 # ==========================================
 def load_csv_safe(file):
     encodings = ['cp932', 'shift_jis', 'utf-8', 'utf-8-sig']
     for enc in encodings:
         try:
             file.seek(0)
-            return pd.read_csv(file, encoding=enc)
+            # 💡 追加：engine='python' と on_bad_lines='skip' で、列数が合わない行（注意書きなど）を強引に無視します
+            return pd.read_csv(file, encoding=enc, engine='python', on_bad_lines='skip')
         except:
             continue
     file.seek(0)
-    return pd.read_csv(file, encoding='cp932', encoding_errors='replace')
+    return pd.read_csv(file, encoding='cp932', encoding_errors='replace', engine='python', on_bad_lines='skip')
 
 # ==========================================
 # UI: サイドバー（CSVアップロード）
