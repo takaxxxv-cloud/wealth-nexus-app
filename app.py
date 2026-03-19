@@ -137,7 +137,12 @@ df_list = []
 if uploaded_file is not None:
     sbi_df = parse_sbi_csv(uploaded_file)
     if len(sbi_df) > 0:
-        sbi_df['取得金額'] = sbi_df['保有数量'] * sbi_df['平均取得単価']
+        # 💡 修正：投資信託は「1万口あたり」の単価なので、計算時に10000で割る
+        sbi_df['取得金額'] = np.where(
+            sbi_df['アセットクラス'] == '投資信託',
+            (sbi_df['保有数量'] / 10000) * sbi_df['平均取得単価'],
+            sbi_df['保有数量'] * sbi_df['平均取得単価']
+        )
         sbi_df['評価損益'] = sbi_df['評価額'] - sbi_df['取得金額']
         df_list.append(sbi_df)
 
