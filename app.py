@@ -27,7 +27,6 @@ custom_css = """
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* データエディタのヘッダー色などを少し調整 */
     [data-testid="stDataFrame"] { background-color: transparent !important; }
 </style>
 """
@@ -106,19 +105,27 @@ with st.sidebar:
     st.markdown("<h4 style='color: #C5A059; font-weight: 400;'>🌍 外国株式（手入力）</h4>", unsafe_allow_html=True)
     exchange_rate = st.number_input("💵 現在の為替レート (円/ドル)", min_value=100.0, value=150.0, step=0.5)
     
-    # 手入力用データフレームの初期化
     if 'foreign_data' not in st.session_state:
         st.session_state.foreign_data = pd.DataFrame(
             [{"銘柄名": "AAPL", "数量": 10.0, "平均取得単価($)": 150.0, "現在値($)": 170.0}]
         )
-    
-    st.caption("※行の一番下をクリックして新しい銘柄を追加できます。ドルで入力すると自動で円換算されます。")
-    # 🔥 ここが魔法のデータエディター！
     edited_foreign = st.data_editor(
-        st.session_state.foreign_data,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=True
+        st.session_state.foreign_data, num_rows="dynamic", use_container_width=True, hide_index=True
+    )
+    
+    st.divider()
+    
+    # 🏢 不動産クラウドファンディング入力エリア（💡 新規追加！）
+    st.markdown("<h4 style='color: #C5A059; font-weight: 400;'>🏢 不動産CF（手入力）</h4>", unsafe_allow_html=True)
+    
+    if 'real_estate_data' not in st.session_state:
+        st.session_state.real_estate_data = pd.DataFrame(
+            [{"ファンド名": "〇〇レジデンス第1号", "出資金額(円)": 500000, "現在評価額(円)": 500000}]
+        )
+    
+    st.caption("※行の一番下をクリックして新しいファンドを追加できます。")
+    edited_re = st.data_editor(
+        st.session_state.real_estate_data, num_rows="dynamic", use_container_width=True, hide_index=True
     )
 
 # ==========================================
@@ -126,7 +133,7 @@ with st.sidebar:
 # ==========================================
 df_list = []
 
-# 1. SBI証券のデータ（CSVがあれば）
+# 1. SBI証券のデータ
 if uploaded_file is not None:
     sbi_df = parse_sbi_csv(uploaded_file)
     if len(sbi_df) > 0:
@@ -134,24 +141,35 @@ if uploaded_file is not None:
         sbi_df['評価損益'] = sbi_df['評価額'] - sbi_df['取得金額']
         df_list.append(sbi_df)
 
-# 2. 外国株式のデータ（手入力）
+# 2. 外国株式のデータ
 f_df = edited_foreign.copy()
-f_df = f_df[f_df['銘柄名'].str.strip() != ""] # 空白で入力された行は無視
+f_df = f_df[f_df['銘柄名'].str.strip() != ""] 
 if len(f_df) > 0:
     f_df['保有数量'] = pd.to_numeric(f_df['数量'], errors='coerce').fillna(0)
-    # ドル($)の入力値を、為替レートを掛けて日本円に変換
     f_df['平均取得単価'] = pd.to_numeric(f_df['平均取得単価($)'], errors='coerce').fillna(0) * exchange_rate
     f_df['現在値'] = pd.to_numeric(f_df['現在値($)'], errors='coerce').fillna(0) * exchange_rate
     f_df['アセットクラス'] = '米国株式'
-    
     f_df['取得金額'] = f_df['保有数量'] * f_df['平均取得単価']
     f_df['評価額'] = f_df['保有数量'] * f_df['現在値']
     f_df['評価損益'] = f_df['評価額'] - f_df['取得金額']
-    
-    # 必要な列だけを抽出して結合リストに追加
     df_list.append(f_df[['アセットクラス', '銘柄名', '保有数量', '平均取得単価', '現在値', '取得金額', '評価額', '評価損益']])
 
-# 3. 現金データ
+# 3. 不動産クラウドファンディングのデータ（💡 新規追加！）
+re_df = edited_re.copy()
+re_df = re_df[re_df['ファンド名'].str.strip() != ""] 
+if len(re_df) > 0:
+    # 数量の概念がないため「1」として扱い、単価＝出資額として計算します
+    re_df['保有数量'] = 1
+    re_df['平均取得単価'] = pd.to_numeric(re_df['出資金額(円)'], errors='coerce').fillna(0)
+    re_df['現在値'] = pd.to_numeric(re_df['現在評価額(円)'], errors='coerce').fillna(0)
+    re_df['アセットクラス'] = '不動産CF'
+    re_df['銘柄名'] = re_df['ファンド名']
+    re_df['取得金額'] = re_df['平均取得単価']
+    re_df['評価額'] = re_df['現在値']
+    re_df['評価損益'] = re_df['評価額'] - re_df['取得金額']
+    df_list.append(re_df[['アセットクラス', '銘柄名', '保有数量', '平均取得単価', '現在値', '取得金額', '評価額', '評価損益']])
+
+# 4. 現金データ
 cash_df = pd.DataFrame({
     'アセットクラス': ['現金・預金'], '銘柄名': ['日本円'], '保有数量': [1], '平均取得単価': [cash_amount], 
     '現在値': [cash_amount], '取得金額': [cash_amount], '評価額': [cash_amount], '評価損益': [0]
@@ -159,8 +177,11 @@ cash_df = pd.DataFrame({
 df_list.append(cash_df)
 
 # 🚀 全データをガッチャンコ（結合）
-df_assets = pd.concat(df_list, ignore_index=True)
-# 全体を結合したあとに、パーセンテージを計算
+if len(df_list) > 0:
+    df_assets = pd.concat(df_list, ignore_index=True)
+else:
+    df_assets = pd.DataFrame(columns=['アセットクラス', '銘柄名', '保有数量', '平均取得単価', '現在値', '取得金額', '評価額', '評価損益'])
+
 df_assets['損益率(%)'] = np.where(df_assets['取得金額'] > 0, (df_assets['評価損益'] / df_assets['取得金額']) * 100, 0)
 
 
@@ -201,12 +222,12 @@ with g1:
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='#8C8C8C'),
         margin=dict(t=50, b=20, l=0, r=0), showlegend=True
     )
-    gold_palette = ['#C5A059', '#A67C00', '#BF953F', '#FCF6BA', '#B38728', '#FBF5B7']
+    # 色を少し多めに用意しておきます
+    gold_palette = ['#C5A059', '#A67C00', '#BF953F', '#FCF6BA', '#B38728', '#FBF5B7', '#8B6914', '#EEDC82']
     fig_pie.update_traces(marker=dict(colors=gold_palette, line=dict(color='#0A0A0A', width=2)))
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with g2:
-    # 評価額が0より大きいものを抽出し、降順にソートしてトップ10を表示
     top_assets = df_assets[df_assets['評価額'] > 0].sort_values('評価額', ascending=False).head(10)
     fig_bar = px.bar(top_assets, x='銘柄名', y='評価額', text_auto='.2s')
     fig_bar.update_layout(
@@ -227,9 +248,10 @@ st.divider()
 st.markdown("<h3 style='color: #F2F2F2; font-weight: 300;'>📋 保有銘柄詳細</h3>", unsafe_allow_html=True)
 
 display_df = df_assets.copy()
-display_df['保有数量'] = display_df.apply(lambda x: '-' if x['アセットクラス'] == '現金・預金' else f"{x['保有数量']:,.2f}", axis=1)
-display_df['平均取得単価'] = display_df.apply(lambda x: '-' if x['アセットクラス'] == '現金・預金' else f"¥ {x['平均取得単価']:,.0f}", axis=1)
-display_df['現在値'] = display_df.apply(lambda x: '-' if x['アセットクラス'] == '現金・預金' else f"¥ {x['現在値']:,.0f}", axis=1)
+# 現金や不動産CFは「数量」の概念がないため「-」で表示し、それ以外は数値を表示します
+display_df['保有数量'] = display_df.apply(lambda x: '-' if x['アセットクラス'] in ['現金・預金', '不動産CF'] else f"{x['保有数量']:,.2f}", axis=1)
+display_df['平均取得単価'] = display_df.apply(lambda x: '-' if x['アセットクラス'] in ['現金・預金', '不動産CF'] else f"¥ {x['平均取得単価']:,.0f}", axis=1)
+display_df['現在値'] = display_df.apply(lambda x: '-' if x['アセットクラス'] in ['現金・預金', '不動産CF'] else f"¥ {x['現在値']:,.0f}", axis=1)
 display_df['評価額'] = display_df['評価額'].apply(lambda x: f"¥ {x:,.0f}")
 display_df['評価損益'] = display_df['評価損益'].apply(lambda x: f"¥ {x:,.0f}")
 display_df['損益率(%)'] = display_df['損益率(%)'].apply(lambda x: f"{x:+.2f} %" if x != 0 else "-")
